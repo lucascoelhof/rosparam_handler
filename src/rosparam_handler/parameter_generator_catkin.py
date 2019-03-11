@@ -103,8 +103,7 @@ class ParameterGenerator(object):
                      default=entry_strings.index(e), constant=True)
         self.enums.append({'name': name, 'description': description, 'values': entry_strings})
 
-    def add(self, name, paramtype, description, level=0, edit_method='""', default=None, min=None, max=None,
-            configurable=False, global_scope=False, constant=False):
+    def add(self, *pargs, **kwargs):
         """
         Add parameters to your parameter struct. Call this method from your .params file!
 
@@ -128,9 +127,26 @@ class ParameterGenerator(object):
         but the default value is kept.
         :return: None
         """
-        configurable = self._make_bool(configurable)
-        global_scope = self._make_bool(global_scope)
-        constant = self._make_bool(constant)
+        if len(pargs) == 0:
+            name = kwargs.get("name", None)
+        else:
+            name = pargs[0]
+        if len(pargs) > 1:
+            paramtype = pargs[1]
+            description = pargs[2]
+        else:
+            paramtype = kwargs.get("paramtype", None)
+            description = kwargs.get("description", None)
+
+        level = kwargs.get("level", 0)
+        edit_method = kwargs.get("edit_method", '""')
+        default = kwargs.get("default", None)
+        min = kwargs.get("min", None)
+        max = kwargs.get("max", None)
+        configurable = self._make_bool(kwargs.get("configurable", False))
+        global_scope = self._make_bool(kwargs.get("global_scope", False))
+        constant = self._make_bool(kwargs.get("constant", False))
+
         newparam = {
             'name': name,
             'type': paramtype,
