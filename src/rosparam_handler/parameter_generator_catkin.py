@@ -27,10 +27,11 @@
 #
 
 from __future__ import print_function
-from string import Template
-import sys
+
 import os
 import re
+import sys
+from string import Template
 
 
 def eprint(*args, **kwargs):
@@ -206,7 +207,7 @@ class ParameterGenerator(object):
             eprint(param['name'], "The name of field does not follow the ROS naming conventions, "
                                   "see http://wiki.ros.org/ROS/Patterns/Conventions")
         if param['configurable'] and (
-                            param['global_scope'] or param['is_vector'] or param['is_map'] or param['constant']):
+                param['global_scope'] or param['is_vector'] or param['is_map'] or param['constant']):
             eprint(param['name'],
                    "Global Parameters, vectors, maps and constant params can not be declared configurable! ")
         if param['global_scope'] and param['default'] is not None:
@@ -225,6 +226,7 @@ class ParameterGenerator(object):
             ptype = in_type[12:-1].strip()
             self._test_primitive_type(param['name'], ptype)
             param['type'] = 'std::vector<{}>'.format(ptype)
+            param['pytype'] = self._pytype(in_type)
         elif param['is_map']:
             ptype = in_type[9:-1].split(',')
             if len(ptype) != 2:
@@ -238,6 +240,7 @@ class ParameterGenerator(object):
             self._test_primitive_type(param['name'], ptype[0])
             self._test_primitive_type(param['name'], ptype[1])
             param['type'] = 'std::map<{},{}>'.format(ptype[0], ptype[1])
+            param['pytype'] = self._pytype(in_type)
         else:
             # Pytype and defaults can only be applied to primitives
             self._test_primitive_type(param['name'], in_type)
@@ -246,7 +249,16 @@ class ParameterGenerator(object):
     @staticmethod
     def _pytype(drtype):
         """Convert C++ type to python type"""
-        return {'std::string': "str", 'int': "int", 'double': "double", 'bool': "bool"}[drtype]
+        typemap = {'std::string': "str",
+                   'int': "int",
+                   'double': "double",
+                   'bool': "bool",
+                   'std::vector<.*>': "list",
+                   'std::map<.*>': "dict"}
+        for key, value in typemap.iteritems():
+            if re.match(key, drtype):
+                return value
+        return None
 
     @staticmethod
     def _test_primitive_type(name, drtype):
@@ -440,14 +452,17 @@ class ParameterGenerator(object):
                                               '*/').substitute(type=param['type'], name=name,
                                                                description=param['description'],
                                                                default=self._get_cvalue(param, "default")))
-                from_server.append(Template('    rosparam_handler::testConstParam($paramname);').substitute(paramname=full_name))
+                from_server.append(
+                    Template('    rosparam_handler::testConstParam($paramname);').substitute(paramname=full_name))
             else:
                 param_entries.append(Template('  ${type} ${name}; /*!< ${description} */').substitute(
                     type=param['type'], name=name, description=param['description']))
-                from_server.append(Template('    success &= rosparam_handler::getParam($paramname, $name$default);').substitute(
-                    paramname=full_name, name=name, default=default, description=param['description']))
+                from_server.append(
+                    Template('    success &= rosparam_handler::getParam($paramname, $name$default);').substitute(
+                        paramname=full_name, name=name, default=default, description=param['description']))
                 to_server.append(
-                    Template('  rosparam_handler::setParam(${paramname},${name});').substitute(paramname=full_name, name=name))
+                    Template('  rosparam_handler::setParam(${paramname},${name});').substitute(paramname=full_name,
+                                                                                               name=name))
 
             # Test for configurable params
             if param['configurable']:
@@ -462,16 +477,19 @@ class ParameterGenerator(object):
             else:
                 ttype = param['type']
             if param['min'] is not None:
-                test_limits.append(Template('    rosparam_handler::testMin<$type>($paramname, $name, $min);').substitute(
-                    paramname=full_name, name=name, min=param['min'], type=ttype))
+                test_limits.append(
+                    Template('    rosparam_handler::testMin<$type>($paramname, $name, $min);').substitute(
+                        paramname=full_name, name=name, min=param['min'], type=ttype))
             if param['max'] is not None:
-                test_limits.append(Template('    rosparam_handler::testMax<$type>($paramname, $name, $max);').substitute(
-                    paramname=full_name, name=name, max=param['max'], type=ttype))
+                test_limits.append(
+                    Template('    rosparam_handler::testMax<$type>($paramname, $name, $max);').substitute(
+                        paramname=full_name, name=name, max=param['max'], type=ttype))
 
             # Add debug output
             if param['is_vector'] or param['is_map']:
-                string_representation.append(Template('      << "\t" << p.$namespace << "$name:" << rosparam_handler::to_string(p.$name) << '
-                                                      '"\\n"\n').substitute(namespace=namespace, name=name))
+                string_representation.append(
+                    Template('      << "\t" << p.$namespace << "$name:" << rosparam_handler::to_string(p.$name) << '
+                             '"\\n"\n').substitute(namespace=namespace, name=name))
             else:
                 string_representation.append(Template('      << "\t" << p.$namespace << "$name:" << p.$name << '
                                                       '"\\n"\n').substitute(namespace=namespace, name=name))
@@ -510,7 +528,16 @@ class ParameterGenerator(object):
         :return:
         """
         params = self._get_parameters()
-        paramDescription = str(params)
+        paramDescription = ""
+        for param in params:
+            paramtype = param["pytype"] if "pytype" in param else param["type"]
+            paramval = param["default"] \
+                if not isinstance(param["default"], (str, basestring, unicode)) else '"{}"'.format(param["default"])
+            paramDescription += "        self.{name} = {default}  # type: {type}\n".format(name=param["name"],
+                                                                                           default=paramval,
+                                                                                           type=paramtype)
+
+        paramDescription += "        self.description = {}".format(str(params))
 
         # Read in template file
         templatefile = os.path.join(self.dynconfpath, "templates", "Parameters.py.template")
